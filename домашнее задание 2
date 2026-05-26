@@ -1,0 +1,75 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from sklearn.datasets import make_blobs
+
+
+X, _ = make_blobs(
+    n_samples=300,
+    centers=4,
+    cluster_std=1.0,
+    random_state=42
+)
+
+
+class KMeans:
+    def __init__(self, k=4, max_iters=100, tol=1e-4):  # Fixed: __init__ instead of init
+        self.k = k
+        self.max_iters = max_iters
+        self.tol = tol
+
+    def fit_generator(self, X):
+        random_ids = np.random.choice(len(X), self.k, replace=False)
+        centroids = X[random_ids]
+
+        for step in range(self.max_iters):
+            distances = np.linalg.norm(
+                X[:, np.newaxis] - centroids,
+                axis=2
+            )
+            labels = np.argmin(distances, axis=1)
+
+            yield centroids, labels, f"Шаг {step + 1}: Классификация"
+
+            new_centroids = []
+            for i in range(self.k):
+                cluster_points = X[labels == i]
+                if len(cluster_points) == 0:
+                    new_centroids.append(centroids[i])
+                else:
+                    new_centroids.append(cluster_points.mean(axis=0))
+
+            new_centroids = np.array(new_centroids)
+            yield new_centroids, labels, f"Шаг {step + 1}: Обновление центров"
+
+            shift = np.linalg.norm(new_centroids - centroids)
+
+            if shift < self.tol:
+                yield new_centroids, labels, "Алгоритм сошёлся"
+                break
+
+            centroids = new_centroids
+
+
+kmeans = KMeans(k=4)
+generator = kmeans.fit_generator(X)
+
+fig, ax = plt.subplots(figsize=(11, 7))
+
+points = ax.scatter(X[:, 0], X[:, 1], c='lightgray', s=40)
+centers = ax.scatter([], [], c='black', s=300, marker='X', 
+                     edgecolors='white', linewidths=2)
+title = ax.set_title("Визуализация алгоритма K-Means", 
+                     fontsize=16, fontweight='bold')
+ax.grid(True, alpha=0.3)
+
+def update(frame):
+    centroids, labels, text = frame
+    points.set_array(labels)
+    centers.set_offsets(centroids)
+    title.set_text(text)
+    return points, centers
+
+animation = FuncAnimation(fig, update, frames=generator, 
+                          interval=1000, repeat=False)
+plt.show()

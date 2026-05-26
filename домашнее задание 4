@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.ensemble import IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+
+df = pd.read_csv('AmesHousing.csv')
+
+
+df[['Alley', 'Pool QC', 'Fence']] = df[['Alley', 'Pool QC', 'Fence']].fillna('None')
+df['Bsmt Full Bath'] = df['Bsmt Full Bath'].fillna(0)
+df['Garage Area'] = df['Garage Area'].fillna(0)
+df['Lot Frontage'] = df.groupby('Neighborhood')['Lot Frontage'].transform(lambda x: x.fillna(x.median()))
+df['Lot Frontage'] = df['Lot Frontage'].fillna(df['Lot Frontage'].median())
+
+for col in df.select_dtypes(include='number').columns:
+    if df[col].isnull().sum() > 0:
+        df[col] = df[col].fillna(df[col].median())
+for col in df.select_dtypes(include='object').columns:
+    if df[col].isnull().sum() > 0:
+        df[col] = df[col].fillna(df[col].mode()[0])
+
+
+df['House_Age'] = df['Yr Sold'] - df['Year Built']
+df['Years_Since_Remodel'] = df['Yr Sold'] - df['Year Remod/Add']
+
+
+X = df.drop(['SalePrice', 'PID', 'Order'], axis=1)
+y = df['SalePrice']
+cat_cols = X.select_dtypes(include='object').columns
+X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+
+ridge = Ridge(alpha=1.0)
+ridge.fit(X_train, y_train)
+
+coefs = pd.Series(ridge.coef_, index=X.columns)
+top_10 = coefs.abs().sort_values(ascending=False).head(10)
+print("Топ-10 признаков:")
+print(top_10)
+
+plt.figure(figsize=(8,5))
+plt.barh(top_10.index, top_10.values)
+plt.title('Топ-10 признаков (по модулю коэффициента)')
+plt.show()
+
+
+plt.figure(figsize=(8,5))
+plt.scatter(df['Gr Liv Area'], df['SalePrice'], alpha=0.5)
+plt.xlabel('Gr Liv Area')
+plt.ylabel('SalePrice')
+plt.title('Цена от площади')
+plt.show()
+
+iso = IsolationForest(contamination=0.02, random_state=42)
+df['anomaly'] = iso.fit_predict(df[['Gr Liv Area', 'SalePrice']])
+df_outliers = df[df['anomaly'] == -1]
+
+r2_before = r2_score(y_test, ridge.predict(X_test))
+
+X_clean = df[df['anomaly'] != -1].drop(['SalePrice', 'PID', 'Order', 'anomaly'], axis=1)
+y_clean = df[df['anomaly'] != -1]['SalePrice']
+X_clean = pd.get_dummies(X_clean, columns=X_clean.select_dtypes('object').columns, drop_first=True)
+X_clean = X_clean.reindex(columns=X.columns, fill_value=0)
+X_clean_scaled = scaler.transform(X_clean)
+
+X_tr, X_te, y_tr, y_te = train_test_split(X_clean_scaled, y_clean, test_size=0.2, random_state=42)
+ridge_clean = Ridge(alpha=1.0).fit(X_tr, y_tr)
+r2_after = r2_score(y_te, ridge_clean.predict(X_te))
+
+print(f"R2 до удаления аномалий: {r2_before:.4f}")
+print(f"R2 после удаления аномалий: {r2_after:.4f}")
+
+X_num = df.drop(['SalePrice', 'PID', 'Order', 'anomaly'], axis=1).select_dtypes(include='number')
+scaler_k = StandardScaler()
+X_k_scaled = scaler_k.fit_transform(X_num)
+
+km = KMeans(n_clusters=5, random_state=42)
+df['cluster'] = km.fit_predict(X_k_scaled)
+print(df.groupby('cluster')['SalePrice'].mean())
+
+
+X_pca_scaled = scaler_k.fit_transform(df.drop(['SalePrice', 'PID', 'Order', 'anomaly', 'cluster'], axis=1).select_dtypes('number'))
+pca = PCA(n_components=20)
+X_pca = pca.fit_transform(X_pca_scaled)
+
+X_tr_p, X_te_p, y_tr_p, y_te_p = train_test_split(X_pca, df['SalePrice'], test_size=0.2, random_state=42)
+ridge_pca = Ridge().fit(X_tr_p, y_tr_p)
+print(f"R2 на PCA-компонентах: {r2_score(y_te_p, ridge_pca.predict(X_te_p)):.4f}")
+
+
+df['Season'] = df['Mo Sold'].apply(lambda x: 'Winter' if x in [12,1,2] else ('Spring' if x in [3,4,5] else ('Summer' if x in [6,7,8] else 'Autumn')))
+
+print("Средняя цена по годам:")
+print(df.groupby('Yr Sold')['SalePrice'].mean())
+print("Средняя цена по месяцам:")
+print(df.groupby('Mo Sold')['SalePrice'].mean())
+
+p_07 = df[df['Yr Sold']==2007]['SalePrice'].mean()
+p_08 = df[df['Yr Sold']==2008]['SalePrice'].mean()
+print(f"Падение цены в 2008: {(p_08 - p_07)/p_07*100:.2f}%")
+
+spring_price = df[df['Season']=='Spring']['SalePrice'].mean()
+winter_price = df[df['Season']=='Winter']['SalePrice'].mean()
+print(f"Весна vs Зима: {spring_price:.0f} vs {winter_price:.0f}")
